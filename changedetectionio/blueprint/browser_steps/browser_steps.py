@@ -34,6 +34,9 @@ browser_step_ui_config = {'Choose one': '0 0',
                           'Goto URL': '0 1',
                           'Make all child elements visible': '1 0',
                           'Press Enter': '0 0',
+                          'Press and hold element': '1 1',
+                          'Press and hold element containing text': '0 1',
+                          'Press and hold X,Y': '0 1',
                           'Select by label': '1 1',
                           '<select> by option text': '1 1',
                           'Scroll down': '0 0',
@@ -92,7 +95,7 @@ class steppable_browser_interface():
 
         # Trigger click and cautiously handle potential navigation
         # This means the page redirects/reloads/changes JS etc etc
-        if call_action_name.startswith('click_'):
+        if call_action_name.startswith('click_') or call_action_name.startswith('press_and_hold_'):
             try:
                 # Set up navigation expectation before the click (like sync version)
                 async with self.page.expect_event("framenavigated", timeout=3000) as navigation_info:
@@ -204,6 +207,173 @@ class steppable_browser_interface():
                 
         except Exception as e:
             logger.error(f"Error parsing x,y coordinates: {str(e)}")
+
+    async def action_press_and_hold_element(self, selector, value):
+        """Press and hold an element for specified duration in seconds"""
+        logger.debug("Press and hold element")
+        if not selector or not len(selector.strip()):
+            logger.warning("Press and hold element requires a selector")
+            return
+
+        # Parse duration with default of 3.0 seconds
+        try:
+            duration = float(value.strip()) if value and value.strip() else 3.0
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid duration '{value}', using default 3.0 seconds")
+            duration = 3.0
+
+        # Clamp duration to reasonable range (0.1 to 60 seconds)
+        duration = max(0.1, min(60.0, duration))
+
+        try:
+            # Get element bounding box for center coordinates
+            element = self.page.locator(selector)
+            box = await element.bounding_box(timeout=self.action_timeout)
+
+            if not box:
+                logger.warning(f"Could not find element with selector: {selector}")
+                return
+
+            # Calculate center of element
+            x = box['x'] + box['width'] / 2
+            y = box['y'] + box['height'] / 2
+
+            # Move to element
+            await self.page.mouse.move(x, y)
+
+            # Add small random delay before press (like click actions)
+            await self.page.wait_for_timeout(randint(200, 500))
+
+            # Press and hold
+            await self.page.mouse.down(button='left', click_count=1)
+            logger.debug(f"Holding element for {duration} seconds")
+
+            # Hold for duration (convert to milliseconds)
+            await self.page.wait_for_timeout(duration * 1000)
+
+            # Release
+            await self.page.mouse.up(button='left', click_count=1)
+
+        except Exception as e:
+            logger.error(f"Error in press and hold element: {str(e)}")
+            # Ensure mouse is released even if error occurs
+            try:
+                await self.page.mouse.up(button='left', click_count=1)
+            except:
+                pass
+
+    async def action_press_and_hold_x_y(self, selector, value):
+        """Press and hold at specific X,Y coordinates for specified duration"""
+        logger.debug("Press and hold X,Y")
+        # Format: "x,y,duration" or "x,y" (default duration)
+        if not value or not re.match(r'^\s?\d+\s?,\s?\d+(?:\s?,\s?[\d.]+)?\s?$', value):
+            logger.warning("'Press and hold X,Y' should be in format '100,200,5.0' or '100,200'")
+            return
+
+        try:
+            parts = value.strip().split(',')
+            x = int(float(parts[0].strip()))
+            y = int(float(parts[1].strip()))
+
+            # Parse duration with default of 3.0 seconds
+            if len(parts) > 2:
+                try:
+                    duration = float(parts[2].strip())
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid duration in '{value}', using default 3.0 seconds")
+                    duration = 3.0
+            else:
+                duration = 3.0
+
+            # Clamp duration to reasonable range
+            duration = max(0.1, min(60.0, duration))
+
+            # Move to coordinates
+            await self.page.mouse.move(x, y)
+
+            # Add small random delay before press
+            await self.page.wait_for_timeout(randint(200, 500))
+
+            # Press and hold
+            await self.page.mouse.down(button='left', click_count=1)
+            logger.debug(f"Holding at ({x},{y}) for {duration} seconds")
+
+            # Hold for duration
+            await self.page.wait_for_timeout(duration * 1000)
+
+            # Release
+            await self.page.mouse.up(button='left', click_count=1)
+
+        except Exception as e:
+            logger.error(f"Error in press and hold X,Y: {str(e)}")
+            # Ensure mouse is released
+            try:
+                await self.page.mouse.up(button='left', click_count=1)
+            except:
+                pass
+
+    async def action_press_and_hold_element_containing_text(self, selector=None, value=''):
+        """Press and hold element containing specific text for specified duration"""
+        logger.debug("Press and hold element containing text")
+        if not value or not len(value.strip()):
+            logger.warning("Press and hold element containing text requires a value")
+            return
+
+        # Format: "text|duration" or just "text" (default duration)
+        if '|' in value:
+            text, duration_str = value.rsplit('|', 1)
+            try:
+                duration = float(duration_str.strip())
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid duration in '{value}', using default 3.0 seconds")
+                duration = 3.0
+        else:
+            text = value
+            duration = 3.0
+
+        # Clamp duration to reasonable range
+        duration = max(0.1, min(60.0, duration))
+
+        try:
+            elem = self.page.get_by_text(text.strip())
+            if not await elem.count():
+                logger.warning(f"Could not find element containing text: {text}")
+                return
+
+            # Get bounding box of first matching element
+            box = await elem.first.bounding_box(timeout=self.action_timeout)
+
+            if not box:
+                logger.warning(f"Could not get bounding box for element containing: {text}")
+                return
+
+            # Calculate center of element
+            x = box['x'] + box['width'] / 2
+            y = box['y'] + box['height'] / 2
+
+            # Move to element
+            await self.page.mouse.move(x, y)
+
+            # Add small random delay before press
+            await self.page.wait_for_timeout(randint(200, 500))
+
+            # Press and hold
+            await self.page.mouse.down(button='left', click_count=1)
+            logger.debug(f"Holding element containing '{text}' for {duration} seconds")
+
+            # Hold for duration
+            await self.page.wait_for_timeout(duration * 1000)
+
+            # Release
+            await self.page.mouse.up(button='left', click_count=1)
+
+        except Exception as e:
+            logger.error(f"Error in press and hold element containing text: {str(e)}")
+            # Ensure mouse is released
+            try:
+                await self.page.mouse.up(button='left', click_count=1)
+            except:
+                pass
 
     async def action__select_by_option_text(self, selector, value):
         if not selector or not len(selector.strip()):
