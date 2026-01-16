@@ -126,7 +126,7 @@ jobs:
         with:
             images: |
                 ${{ secrets.DOCKER_HUB_USERNAME }}/changedetection.io
-                ghcr.io/dgtlmoon/changedetection.io
+                ghcr.io/${{ github.repository }}
             tags: |
                 type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
                 type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
